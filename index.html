@@ -731,18 +731,21 @@ let cart = [];
 try { cart = JSON.parse(store.get('cart')) || []; } catch (e) { cart = []; }
 if (!Array.isArray(cart)) cart = [];
 /* كل منتوج في سطر واحد مع كميته {code, price, qty} — يدعم أيضاً السلات القديمة المحفوظة (سطر لكل وحدة) */
+/* جدول الأثمنة الرسمي — المصدر الوحيد للأسعار (يمنع أي خطأ أو تلاعب بالأثمنة المخزَّنة) */
+const PRICES = { OIL_1L: 50, OIL_5L: 240, HONEY_1L: 350, HONEY_5L: 1600 };
 cart = (function (list) {
     const map = new Map();
     list.forEach(it => {
-        if (!it || typeof it.code !== 'string' || !isFinite(it.price)) return;
-        const q = Math.max(1, parseInt(it.qty, 10) || 1);
-        const key = it.code + '|' + it.price;
-        const g = map.get(key);
-        if (g) g.qty += q; else map.set(key, { code: it.code, price: Number(it.price), qty: q });
+        if (!it || typeof it.code !== 'string' || !(it.code in PRICES)) return;
+        const q = Math.min(999, Math.max(1, parseInt(it.qty, 10) || 1));
+        const g = map.get(it.code);
+        if (g) g.qty = Math.min(999, g.qty + q); else map.set(it.code, { code: it.code, price: PRICES[it.code], qty: q });
     });
     return Array.from(map.values());
 })(cart);
-let sum = cart.reduce((acc, item) => acc + item.price * item.qty, 0);
+/* المجموع يُحسب دائماً من محتوى الصندوق نفسه (لا يُزاد ولا يُنقص يدوياً) */
+function calcSum() { return cart.reduce((acc, item) => acc + item.price * item.qty, 0); }
+let sum = calcSum();
 
 function setText(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
 function setPH(id, txt) { const el = document.getElementById(id); if (el) el.placeholder = txt; }
@@ -824,27 +827,28 @@ function playCartSound(type) {
 }
 function saveCart() { store.set('cart', JSON.stringify(cart)); updateCartCount(); }
 function add(code, price) {
-    const found = cart.find(it => it.code === code && it.price === price);
-    if (found) found.qty += 1; else cart.push({ code, price, qty: 1 });
-    sum += price; renderCart(); saveCart(); playCartSound('add');
+    if (!(code in PRICES)) return;
+    const found = cart.find(it => it.code === code);
+    if (found) { if (found.qty < 999) found.qty += 1; } else cart.push({ code, price: PRICES[code], qty: 1 });
+    renderCart(); saveCart(); playCartSound('add');
 }
 function del(i) {
     const it = cart[i]; if (!it) return;
-    sum -= it.price;
     if (it.qty > 1) it.qty -= 1; else cart.splice(i, 1);
     renderCart(); saveCart();
 }
-function delOne(code, price) {
-    const index = cart.findIndex(item => item.code === code && item.price === price);
+function delOne(code) {
+    const index = cart.findIndex(item => item.code === code);
     if (index !== -1) del(index);
 }
-function clearCart() { if (cart.length === 0) return; cart = []; sum = 0; renderCart(); saveCart(); playCartSound('clear'); }
+function clearCart() { if (cart.length === 0) return; cart = []; renderCart(); saveCart(); playCartSound('clear'); }
 
 function renderCart() {
     const listDiv = document.getElementById('list');
     const emptyWrapper = document.getElementById('emptyCartUnderIcon');
     const emptyTextSpan = document.getElementById('emptyCartText');
     const d = T[cur] || T.ar;
+    sum = calcSum();
     if (cart.length === 0) {
         if (emptyTextSpan) emptyTextSpan.textContent = d.empty_msg;
         if (emptyWrapper) emptyWrapper.style.display = 'flex';
@@ -861,7 +865,7 @@ function renderCart() {
             const name = d[key] || group.code;
             const row = document.createElement('div');
             row.className = 'row';
-            row.innerHTML = `<div>${name} <strong class="cart-quantity">× ${group.qty}</strong> - ${group.price * group.qty} DH</div><button class="del" onclick="delOne('${group.code}', ${group.price})"><i class="fa-solid fa-trash-can"></i></button>`;
+            row.innerHTML = `<div>${name} <strong class="cart-quantity">× ${group.qty}</strong> - ${group.price * group.qty} DH</div><button class="del" onclick="delOne('${group.code}')"><i class="fa-solid fa-trash-can"></i></button>`;
             listDiv.appendChild(row);
         });
     }
@@ -881,6 +885,7 @@ function sendWA() {
     if (cart.length === 0) { alert(d.alert_empty); return; }
     if (!name || !phone || !country || !city || !addr) { alert(d.alert_info); return; }
     const productNames = { OIL_1L: d.n_oil1, OIL_5L: d.n_oil5, HONEY_1L: d.n_honey1, HONEY_5L: d.n_honey5 };
+    sum = calcSum();
     let msg = `${d.order_title}\n\n`;
     msg += `👤 *${d.name}:* ${name}\n📞 *${d.phone}:* ${phone}\n🌍 *${d.country}:* ${country}\n🏙️ *${d.city}:* ${city}\n📍 *${d.addr}:* ${addr}\n\n📦 *${d.products}:*\n`;
     cart.forEach((it, idx) => { msg += `${idx+1}. ${productNames[it.code] || it.code} × ${it.qty} - ${it.price * it.qty} DH\n`; });
